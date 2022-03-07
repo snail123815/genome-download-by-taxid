@@ -126,6 +126,33 @@ def splitGroup(listObj, step):
     return ll
 
 
+def elink_by_step(RecIO, allIds, db, dbfrom, linkname, term=None, step=500):
+    groups = splitGroup(allIds, step)
+    allTarIds = RecIO.readList()
+    if RecIO.nGroups == -1:
+        RecIO.nGroups = len(groups)
+    i = RecIO.gn
+    while not RecIO.completed:
+        ids = []
+        logger.info(f'   Getting nucleotide ids for group {i+1}/{RecIO.nGroups}')
+        handle = Entrez.elink(
+            db = db,
+            dbfrom = dbfrom,
+            id=groups[i],
+            linkname=linkname, # will remove most irrelevent sequences
+            term=term
+        )
+        record = Entrez.read(handle)
+        handle.close()
+        [ids.extend(
+            [l['Id'] for l in r['LinkSetDb'][0]['Link']]
+        ) for r in record if len(r['LinkSetDb']) > 0]
+        RecIO.appendList(ids)
+        allTarIds.extend(ids)
+        i += 1
+    return allTarIds
+
+
 def fetch_nucl_by_taxID(targetTx, minLength, targetDir, api, email):
     Entrez.api_key = api
     Entrez.email = email
@@ -167,56 +194,21 @@ def fetch_nucl_by_taxID(targetTx, minLength, targetDir, api, email):
     # Get assemblies from taxid
     logger.info(f'2. Fetch linked assembly ids of fetched taxids')
     allTax = allTax[:1400]
-    eachGroup_ass = 500 # submit this number of ids in each request. Prevent dead response.
-    taxGroups = splitGroup(allTax, eachGroup_ass)
-    allAssemblies = asmids_io.readList()
-    if asmids_io.nGroups == -1:
-        asmids_io.nGroups = len(taxGroups)
-    i = asmids_io.gn
-    while not asmids_io.completed:
-        assemblies = []
-        logger.info(f'   Getting assembly ids for group {i+1}/{asmids_io.nGroups}')
-        handle = Entrez.elink(
-            db='assembly',
-            dbfrom='taxonomy',
-            id=taxGroups[i],
-            linkname='taxonomy_assembly',
-        )
-        record_a = Entrez.read(handle)
-        handle.close()
-        [assemblies.extend([l['Id'] for l in r['LinkSetDb'][0]['Link']]) for r in record_a if len(r['LinkSetDb']) > 0]
-        asmids_io.appendList(assemblies, i)
-        allAssemblies.extend(assemblies)
-        i += 1
-        # not all taxid have corresponding assembly, many have more than 1 assembly.
+    allAssemblies = elink_by_step(asmids_io, allTax,
+                                  db='assembly',
+                                  dbfrom='taxonomy',
+                                  linkname='taxonomy_assembly')
     logger.info(f'   Total number of assemblies is {len(allAssemblies)}.')
     logger.info(f'   The first 5 are: {allAssemblies[:min(len(allAssemblies), 5)]}')
 
     # 3nd step
     # Get nucleic id from refseq
     logger.info(f'3. Fetch nucl ids of fetched assemblies, only refseq.')
-    eachGroup_nucl = 200 # submit this number of ids in each request. Prevent dead response.
-    assGroups = splitGroup(allAssemblies, eachGroup_nucl)
-    allNucl = nuclids_io.readList()
-    if nuclids_io.nGroups == -1:
-        nuclids_io.nGroups = len(assGroups)
-    i = nuclids_io.gn
-    while not nuclids_io.completed:
-        nucls = []
-        logger.info(f'   Getting nucleotide ids for group {i+1}/{nuclids_io.nGroups}')
-        handle = Entrez.elink(
-            db = 'nuccore',
-            dbfrom = 'assembly',
-            id=assGroups[i],
-            linkname='assembly_nuccore_refseq', # will remove most irrelevent sequences
-            term=f'{minLength}:99999999[SLEN]'
-        )
-        record_n = Entrez.read(handle)
-        handle.close()
-        [nucls.extend([l['Id'] for l in r['LinkSetDb'][0]['Link']]) for r in record_n if len(r['LinkSetDb']) > 0]
-        nuclids_io.appendList(nucls)
-        allNucl.extend(nucls)
-        i += 1
+    allNucl = elink_by_step(nuclids_io, allAssemblies,
+                            db='nuccore',
+                            dbfrom='assembly',
+                            linkname='assembly_nuccore_refseq',
+                            term=f'{minLength}:99999999[SLEN]')
     logger.info(f'   Total number of nucleotides is {len(allNucl)}.')
     logger.info(f'   The first 5 are: {allNucl[:min(len(allNucl), 5)]}')
 
