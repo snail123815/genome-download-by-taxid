@@ -269,18 +269,37 @@ if __name__ == '__main__':
     scriptDir = os.path.split(os.path.realpath(__file__))[0]
     testOutputDir = os.path.join(scriptDir, 'test_output')
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument('api', type=str, help='API key from NCBI')
-    parser.add_argument('email', type=str, help='Email address for identify yourself')
+    parser = argparse.ArgumentParser(exit_on_error=False)
+    parser.add_argument('api', type=str, nargs='?', default="", help='API key from NCBI')
+    parser.add_argument('email', type=str, nargs='?', default="", help='Email address for identify yourself')
     parser.add_argument('-t', action='store_true', help='Set if you want to run a test. Only few records will be collected')
-    targets = parser.add_argument_group('Target arguments')
-    targets.add_argument('--taxIds', type=str, nargs='+', default=['201174'], help='Target taxonomyIds')
-    targets.add_argument('--minLen', type=int, default=10000, help='Discard nucleotides less than this length')
-    targets.add_argument('--outputDir', type=str, default=testOutputDir, help='Output dir')
+    parser.add_argument('--taxIds', type=str, nargs='+', default=['201174'], help='Target taxonomyIds')
+    parser.add_argument('--minLen', type=int, default=10000, help='Discard nucleotides less than this length')
+    parser.add_argument('--outputDir', type=str, default=testOutputDir, help='Output dir')
     
     args = parser.parse_args()
     logging.basicConfig(filename=os.path.join(args.outputDir, 'Fetch_taxonomy_nucl.log'), level=logging.INFO)
     logger = logging.getLogger()
+    argsFile = os.path.join(args.outputDir, 'args.txt')
+
+    if args.api == "" or args.email == "":
+        assert args.api == "" and args.email == "", 'Leave both api and email empty if you want to restart a previsou run.'
+        if not os.path.isfile(argsFile):
+            raise FileNotFoundError(f'File {argsFile} not exist. Cannot continue.')
+        with open(argsFile, 'r') as fh:
+            logger.info(f'Getting arguments from previous run in {argsFile}')
+            argLine = fh.readline()
+            try:
+                args = parser.parse_args(argLine.split(' ')[1:])
+            except argparse.ArgumentError as e:
+                print('catch')
+                logger.info('Argument parsing error. Argument line in file:')
+                logger.info(argLine)
+                raise e
+    else:
+        with open(argsFile, 'w') as fh:
+            fh.write(' '.join(sys.argv))
+    exit()
 
     # Check if test is correctly set or unset
     if args.t:
