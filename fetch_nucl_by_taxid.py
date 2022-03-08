@@ -278,6 +278,7 @@ if __name__ == '__main__':
     parser.add_argument('--outputDir', type=str, default=testOutputDir, help='Output dir')
     
     args = parser.parse_args()
+    os.makedirs(args.outputDir, exist_ok=True)
     logging.basicConfig(filename=os.path.join(args.outputDir, 'Fetch_taxonomy_nucl.log'), level=logging.INFO)
     logger = logging.getLogger()
     argsFile = os.path.join(args.outputDir, 'args.txt')
@@ -299,7 +300,6 @@ if __name__ == '__main__':
     else:
         with open(argsFile, 'w') as fh:
             fh.write(' '.join(sys.argv))
-    exit()
 
     # Check if test is correctly set or unset
     if args.t:
