@@ -94,8 +94,11 @@ class RecordIO:
                 self.completed = True
             newHeader = self.pf + (f'{gn+1}/{nGroups}' if not self.completed else self._completeMark)
             # change the first line of target file
-            cmd = ['sed', '-i', '', '-e', '1,1s/.*/' + newHeader.replace('/', '\/') + '/g', self.file]
-            subprocess.call(cmd)
+            with open(self.file, 'r') as fh:
+                lines = fh.readlines()
+            lines[0] = newHeader + '\n'
+            with open(self.file, 'w') as fh:
+                fh.writelines(lines)
         with open(self.file, 'a') as fh:
             fh.writelines(f'{i}\n' for i in l)
 

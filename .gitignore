@@ -3,3 +3,4 @@ elink.dtd
 .vscode
 test_output
 .DS_store
+*.swp
