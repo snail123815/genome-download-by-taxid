@@ -6,7 +6,7 @@ import sys
 import subprocess
 import logging
 import pickle
-from calHash_on_args import calHash
+from modules.calHash_on_args import calHash
 
 
 class RecordIO:
