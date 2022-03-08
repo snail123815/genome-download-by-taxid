@@ -310,7 +310,7 @@ if __name__ == '__main__':
         logger.info('Only fetch first 500 ids')
         if args.taxIds != ['201174'] or args.minLen != 10000 or os.path.realpath(args.outputDir) != testOutputDir:
             parser.error('If test (-t), please leave "taxIds", "minLen", and "outputDir" default.')
-    elif args.taxIds == ['201174'] or args.minLen == 10000 or os.path.realpath(args.outputDir) == testOutputDir:
+    elif args.taxIds == ['201174'] and args.minLen == 10000 and os.path.realpath(args.outputDir) == testOutputDir:
         parser.error('Arguments --taxIds, --minLen, --outputDir are required!')
     elif os.path.realpath(args.outputDir) == testOutputDir:
         parser.error(f'Please do not set output dir as {testOutputDir}')
