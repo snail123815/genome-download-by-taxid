@@ -9,6 +9,7 @@ import logging
 import pickle
 from modules.calHash_on_args import calHash
 import threading
+from concurrent.futures import ThreadPoolExecutor
 
 
 class RecordIO:
@@ -211,6 +212,7 @@ def fetch_nucl_by_taxID(targetTx, minLen, targetDir, api, email, isTest=False):
     logger.info(f'   The first 5 are: {allNucl[:min(len(allNucl), 5)]}')
     return allNucl, nuclids_io.file
 
+
 def fetch_nucl_by_step(targetDir, idsFile, step=200, isTest=False, maxconnections=10):
     logger=logging.getLogger()
     logger.info(f'{" Start fetching nucleotide data ":=^80}')
@@ -250,7 +252,12 @@ def fetch_nucl_by_step(targetDir, idsFile, step=200, isTest=False, maxconnection
 
     maxDig = len(str(len(idGroups)+1))
 
+    sema = threading.Semaphore(10)
+    # API key allow only 10 connections per second, will sleep 1 sec within the function to comply.
+    # This may be redundant as the Entrez module has _open.previous variable to track timming:
+    # https://github.com/biopython/biopython/blob/e001f2eed6a9cc6260f60f87ed90fcf8ea2df4ca/Bio/Entrez/__init__.py#L561
     def fetchGbk(n, idGroups):
+        sema.acquire()
         file = os.path.join(targetDir, f'nucl_{str(n+1).zfill(maxDig)}.gbk')
         idFile = os.path.join(targetDir, f'nucl_{str(n+1).zfill(maxDig)}.txt')
         trials = 3
@@ -266,8 +273,15 @@ def fetch_nucl_by_step(targetDir, idsFile, step=200, isTest=False, maxconnection
                 )
                 with open(file, 'w') as fh:
                     record = handle.read()
-
-                    fh.write(record)
+                    # TODO write a check if record contains Example error message if rates are exceeded:
+                    # {"error":"API rate limit exceeded","count":"11"}
+                    if not isinstance(record, str) or 'API' in record[:100]:
+                        if 'API' in record['error']:
+                            logger.warning('It seems you have some API problem:')
+                            logger.warning()
+                        raise
+                    else:
+                        fh.write(record)
                 handle.close()
                 success = True
             except:
@@ -280,9 +294,14 @@ def fetch_nucl_by_step(targetDir, idsFile, step=200, isTest=False, maxconnection
             updateInfo() # Number finished, update after fetching
         else:
             logger.info(f"3 trials not succeed for group {n+1}")
-
-    while len(toFetchGroupIdxs)>0:
+        sema.release()
+        sleep(1)
+    
+    with ThreadPoolExecutor(max_workers=maxconnections) as worker:
         pass
+        for n in toFetchGroupIdxs:
+            worker.submit(fetchGbk, n, idGroups)
+
     return missingList
 
 
