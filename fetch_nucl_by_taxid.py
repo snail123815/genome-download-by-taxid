@@ -292,10 +292,10 @@ def fetch_nucl_by_step(targetDir, idsFile, step=200, isTest=False, maxconnection
         if success:
             with open(idFile, 'w') as fh:
                 [fh.write(str(i) + '\n') for i in idGroups[n]]
-            logger.info(f"Finished group {n+1}: {os.stat(file).st_size/1024/1024:.2f} MB")
+            logger.info(f"Finished group {n+1}: {os.stat(file).st_size/1024/1024:.2f} MB {os.path.split(file)[-1]}")
             updateInfo(n) # Number finished, update after fetching
         else:
-            logger.info(f"3 trials not succeed for group {n+1}: {os.path.split(file)[-1]}")
+            logger.info(f"3 trials not succeed for group {n+1}")
         sema.release()
         sleep(1)
     
