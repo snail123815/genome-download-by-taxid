@@ -1,3 +1,4 @@
+from tkinter import W
 from Bio import Entrez
 import os
 import pickle
@@ -7,6 +8,7 @@ import subprocess
 import logging
 import pickle
 from modules.calHash_on_args import calHash
+import threading
 
 
 class RecordIO:
@@ -209,7 +211,7 @@ def fetch_nucl_by_taxID(targetTx, minLen, targetDir, api, email, isTest=False):
     logger.info(f'   The first 5 are: {allNucl[:min(len(allNucl), 5)]}')
     return allNucl, nuclids_io.file
 
-def fetch_nucl_by_step(targetDir, idsFile, step=200, isTest=False):
+def fetch_nucl_by_step(targetDir, idsFile, step=200, isTest=False, maxconnections=10):
     logger=logging.getLogger()
     logger.info(f'{" Start fetching nucleotide data ":=^80}')
     fetchHash = calHash(idsFile, step, isTest)
@@ -219,20 +221,36 @@ def fetch_nucl_by_step(targetDir, idsFile, step=200, isTest=False):
     logger.info(f'Total number of ids {len(ids)}, first 5: {ids[:min(len(ids),5)]}')
     if isTest:
         ids = ids[:min(len(ids), 500)]
+
     idGroups = splitGroup(ids, step)
-    missingList = []
-    lastGroupIdx = -1 # Means not finished at all
-    def updateInfo(lastGroupIdx, missingList):
-        with open(infoFile, 'wb') as fh:
-            pickle.dump([lastGroupIdx, missingList], fh)
+    toFetchGroupIdxs = list(range(len(idGroups)))
+    finishedGroupIdxs = []
+
+    infoLock = threading.Lock
+    def updateInfo(n, finishedGroupIdxs, toFetchGroupIdxs, finish=True):
+        with infoLock:
+            if n != -1 and finish:
+                finishedGroupIdxs.append(n)
+                finishedGroupIdxs.sort()
+                toFetchGroupIdxs.remove(n)
+            elif not finish:
+                toFetchGroupIdxs.append(n)
+                toFetchGroupIdxs.sort()
+                finishedGroupIdxs.remove(n)
+            with open(infoFile, 'wb') as fh:
+                pickle.dump([finishedGroupIdxs], fh)
+        return finishedGroupIdxs, toFetchGroupIdxs
+
     if os.path.isfile(infoFile):
         with open(infoFile, 'rb') as fh:
-            lastGroupIdx, missingList = pickle.load(fh)
+            finishedGroupIdxs = pickle.load(fh)
+        [toFetchGroupIdxs.remove(n) for n in finishedGroupIdxs]
     else:
-        updateInfo(lastGroupIdx, missingList)
+        updateInfo(-1, finishedGroupIdxs, toFetchGroupIdxs)
+
     maxDig = len(str(len(idGroups)+1))
-    ns = list(range(lastGroupIdx+1, len(idGroups))) + missingList
-    for n in ns:
+
+    def fetchGbk(n, idGroups):
         file = os.path.join(targetDir, f'nucl_{str(n+1).zfill(maxDig)}.gbk')
         idFile = os.path.join(targetDir, f'nucl_{str(n+1).zfill(maxDig)}.txt')
         trials = 3
@@ -247,7 +265,9 @@ def fetch_nucl_by_step(targetDir, idsFile, step=200, isTest=False):
                     retmode='text'
                 )
                 with open(file, 'w') as fh:
-                    fh.write(handle.read())
+                    record = handle.read()
+
+                    fh.write(record)
                 handle.close()
                 success = True
             except:
@@ -257,10 +277,12 @@ def fetch_nucl_by_step(targetDir, idsFile, step=200, isTest=False):
             with open(idFile, 'w') as fh:
                 [fh.write(str(i) + '\n') for i in idGroups[n]]
             logger.info(f"handle.read(Finished group {n+1}: {os.stat(file).st_size/1024/1024:.2f} MB {file}")
+            updateInfo() # Number finished, update after fetching
         else:
             logger.info(f"3 trials not succeed for group {n+1}")
-            missingList.append(n)
-        updateInfo(n, missingList) # Number finished, update after fetching
+
+    while len(toFetchGroupIdxs)>0:
+        pass
     return missingList
 
 
