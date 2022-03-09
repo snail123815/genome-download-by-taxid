@@ -1,4 +1,3 @@
-from tkinter import W
 from Bio import Entrez
 import os
 import pickle
@@ -228,8 +227,8 @@ def fetch_nucl_by_step(targetDir, idsFile, step=200, isTest=False, maxconnection
     toFetchGroupIdxs = list(range(len(idGroups)))
     finishedGroupIdxs = []
 
-    infoLock = threading.Lock
-    def updateInfo(n, finishedGroupIdxs, toFetchGroupIdxs, finish=True):
+    infoLock = threading.Lock()
+    def updateInfo(n, finish=True):
         with infoLock:
             if n != -1 and finish:
                 finishedGroupIdxs.append(n)
@@ -241,14 +240,13 @@ def fetch_nucl_by_step(targetDir, idsFile, step=200, isTest=False, maxconnection
                 finishedGroupIdxs.remove(n)
             with open(infoFile, 'wb') as fh:
                 pickle.dump([finishedGroupIdxs], fh)
-        return finishedGroupIdxs, toFetchGroupIdxs
 
     if os.path.isfile(infoFile):
         with open(infoFile, 'rb') as fh:
             finishedGroupIdxs = pickle.load(fh)
         [toFetchGroupIdxs.remove(n) for n in finishedGroupIdxs]
     else:
-        updateInfo(-1, finishedGroupIdxs, toFetchGroupIdxs)
+        updateInfo(-1)
 
     maxDig = len(str(len(idGroups)+1))
 
@@ -256,7 +254,7 @@ def fetch_nucl_by_step(targetDir, idsFile, step=200, isTest=False, maxconnection
     # API key allow only 10 connections per second, will sleep 1 sec within the function to comply.
     # This may be redundant as the Entrez module has _open.previous variable to track timming:
     # https://github.com/biopython/biopython/blob/e001f2eed6a9cc6260f60f87ed90fcf8ea2df4ca/Bio/Entrez/__init__.py#L561
-    def fetchGbk(n, idGroups):
+    def fetchGbk(n):
         sema.acquire()
         file = os.path.join(targetDir, f'nucl_{str(n+1).zfill(maxDig)}.gbk')
         idFile = os.path.join(targetDir, f'nucl_{str(n+1).zfill(maxDig)}.txt')
@@ -273,36 +271,39 @@ def fetch_nucl_by_step(targetDir, idsFile, step=200, isTest=False, maxconnection
                 )
                 with open(file, 'w') as fh:
                     record = handle.read()
-                    # TODO write a check if record contains Example error message if rates are exceeded:
+                    # Example error message if rates are exceeded:
                     # {"error":"API rate limit exceeded","count":"11"}
-                    if not isinstance(record, str) or 'API' in record[:100]:
-                        if 'API' in record['error']:
-                            logger.warning('It seems you have some API problem:')
-                            logger.warning()
-                        raise
+                    # However, I don't know what is the return from error message.
+                    # Str or byte? Or maybe directly HTTPError?
+                    if not isinstance(record, str):
+                        logger.warning('It seems you have some API problem:')
+                        rec = record.decode()
+                        logger.warning(rec[:min(100, len(rec))])
+                        raise # go to next trial
                     else:
                         fh.write(record)
                 handle.close()
                 success = True
-            except:
+            except Exception as e:
+                logger.warning(f'Error fetching group {n+1}:')
+                logger.warning(f'{e}')
                 sleep(2)
                 trials -= 1
         if success:
             with open(idFile, 'w') as fh:
                 [fh.write(str(i) + '\n') for i in idGroups[n]]
-            logger.info(f"handle.read(Finished group {n+1}: {os.stat(file).st_size/1024/1024:.2f} MB {file}")
-            updateInfo() # Number finished, update after fetching
+            logger.info(f"Finished group {n+1}: {os.stat(file).st_size/1024/1024:.2f} MB")
+            updateInfo(n) # Number finished, update after fetching
         else:
-            logger.info(f"3 trials not succeed for group {n+1}")
+            logger.info(f"3 trials not succeed for group {n+1}: {os.path.split(file)[-1]}")
         sema.release()
         sleep(1)
     
     with ThreadPoolExecutor(max_workers=maxconnections) as worker:
-        pass
         for n in toFetchGroupIdxs:
-            worker.submit(fetchGbk, n, idGroups)
+            worker.submit(fetchGbk, n)
 
-    return missingList
+    return toFetchGroupIdxs
 
 
 
@@ -362,13 +363,15 @@ if __name__ == '__main__':
                                                targetDir=args.outputDir,
                                                api=args.api, email=args.email,
                                                isTest=args.t)
-    missingList = fetch_nucl_by_step(args.outputDir, nuclIdsFile, isTest=args.t)
+    missingGroups = fetch_nucl_by_step(args.outputDir, nuclIdsFile, isTest=args.t)
     if not args.t:
         trials = 3
-        while len(missingList) > 0 and trials > 0:
+        while len(missingGroups) > 0 and trials > 0:
             trials -= 1
-            retryStr = f'Retrying {len(missingList)} missed groups. Trial No.{3-trials}'
+            retryStr = f'Retrying {len(missingGroups)} missed groups. Trial No.{3-trials}'
             logger.info(f'{retryStr:=^80}')
-            missingList = fetch_nucl_by_step(args.outputDir, nuclIdsFile)
+            missingGroups = fetch_nucl_by_step(args.outputDir, nuclIdsFile)
+        if len(missingGroups) > 0:
+            logger.warning(f'Finish with missing groups: {missingGroups}')
 
     logger.info(f'{" DONE ":=^80}')
