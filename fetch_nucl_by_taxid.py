@@ -213,6 +213,8 @@ def fetch_nucl_by_taxID(targetTx, minLen, targetDir, api, email, isTest=False):
 
 
 def fetch_nucl_by_step(targetDir, idsFile, step=200, isTest=False, maxconnections=10):
+    # NOTE maxconnections>10 do not work as expected. Because of the Semaphore settings.
+    # TODO make maxconnections>10 work!
     logger=logging.getLogger()
     logger.info(f'{" Start fetching nucleotide data ":=^80}')
     fetchHash = calHash(idsFile, step, isTest)
