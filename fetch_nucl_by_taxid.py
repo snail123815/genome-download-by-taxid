@@ -239,7 +239,7 @@ def fetch_nucl_by_step(targetDir, idsFile, step=200, isTest=False, maxconnection
                 toFetchGroupIdxs.sort()
                 finishedGroupIdxs.remove(n)
             with open(infoFile, 'wb') as fh:
-                pickle.dump([finishedGroupIdxs], fh)
+                pickle.dump(finishedGroupIdxs, fh)
 
     if os.path.isfile(infoFile):
         with open(infoFile, 'rb') as fh:
