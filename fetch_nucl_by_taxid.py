@@ -238,7 +238,7 @@ def elink_by_step(RecIO, allIds, db, dbfrom, linkname, term=None, step=500, minS
     return allTarIds
 
 
-def fetch_nucl_by_taxID(targetTx, minLen, targetDir, api, email, isTest=False):
+def fetch_nucl_by_taxID(targetTx, minLen, targetDir, api, email, logger, isTest=False):
     Entrez.api_key = api
     Entrez.email = email
     txHash = calHash(targetTx, isTest)
@@ -304,7 +304,7 @@ def fetch_nucl_by_taxID(targetTx, minLen, targetDir, api, email, isTest=False):
     return allNucl, nuclids_io.file
 
 
-def fetch_nuclData_by_step(targetDir, idsFile, step=200, isTest=False, maxconnections=10):
+def fetch_nuclData_by_step(targetDir, idsFile, logger, step=200, isTest=False, maxconnections=10):
     # NOTE maxconnections>10 do not work as expected. Because of the Semaphore settings.
     # TODO make maxconnections>10 work!
     logger=logging.getLogger()
@@ -464,9 +464,10 @@ def main():
                                                minLen=args.minLen,
                                                targetDir=args.outputDir,
                                                api=args.api, email=args.email,
+                                               logger=logger,
                                                isTest=args.t)
     # Fetch nucleotide data
-    missingGroups = fetch_nuclData_by_step(args.outputDir, nuclIdsFile, isTest=args.t)
+    missingGroups = fetch_nuclData_by_step(args.outputDir, nuclIdsFile, logger=logger, isTest=args.t)
     # Retry missed nucleotide data
     if not args.t:
         trials = 3
@@ -474,7 +475,7 @@ def main():
             trials -= 1
             retryStr = f'Retrying {len(missingGroups)} missed groups. Trial No.{3-trials}'
             logger.info(f'{retryStr:=^80}')
-            missingGroups = fetch_nuclData_by_step(args.outputDir, nuclIdsFile)
+            missingGroups = fetch_nuclData_by_step(args.outputDir, nuclIdsFile, logger=logger)
         if len(missingGroups) > 0:
             logger.warning(f'Finish with missing groups: {missingGroups}')
 
