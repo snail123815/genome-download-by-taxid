@@ -110,6 +110,7 @@ class RecordIO:
 
 
 def splitGroup(listObj, step=None, n=None, quiet=False):
+    logger = logging.getLogger()
     assert (step is None and not n is None) or (not step is None and n is None)
     if n is None:
         ll = [] # list of list with maximum {step} of items each
@@ -133,6 +134,7 @@ def splitGroup(listObj, step=None, n=None, quiet=False):
 def elink_by_step(RecIO, allIds, db, dbfrom, linkname, term=None, step=500, minStep=10, maxconnections=10):
     groups = splitGroup(allIds, step)
     allTarIds = RecIO.readList()
+    logger = logging.getLogger()
     if RecIO.nGroups == -1:
         RecIO.nGroups = len(groups)
     i = RecIO.gn
@@ -238,11 +240,12 @@ def elink_by_step(RecIO, allIds, db, dbfrom, linkname, term=None, step=500, minS
     return allTarIds
 
 
-def fetch_nucl_by_taxID(targetTx, minLen, targetDir, api, email, logger, isTest=False):
+def fetch_nucl_by_taxID(targetTx, minLen, targetDir, api, email, isTest=False):
     Entrez.api_key = api
     Entrez.email = email
     txHash = calHash(targetTx, isTest)
     nuclIdHash = calHash(targetTx, minLen, isTest)
+    logger = logging.getLogger()
 
     txids_file = os.path.join(targetDir, f'txid_{txHash}.txt')
     txids_io = RecordIO(txids_file)
@@ -304,7 +307,7 @@ def fetch_nucl_by_taxID(targetTx, minLen, targetDir, api, email, logger, isTest=
     return allNucl, nuclids_io.file
 
 
-def fetch_nuclData_by_step(targetDir, idsFile, logger, step=200, isTest=False, maxconnections=10):
+def fetch_nuclData_by_step(targetDir, idsFile, step=200, isTest=False, maxconnections=10):
     # NOTE maxconnections>10 do not work as expected. Because of the Semaphore settings.
     # TODO make maxconnections>10 work!
     logger=logging.getLogger()
@@ -464,10 +467,9 @@ def main():
                                                minLen=args.minLen,
                                                targetDir=args.outputDir,
                                                api=args.api, email=args.email,
-                                               logger=logger,
                                                isTest=args.t)
     # Fetch nucleotide data
-    missingGroups = fetch_nuclData_by_step(args.outputDir, nuclIdsFile, logger=logger, isTest=args.t)
+    missingGroups = fetch_nuclData_by_step(args.outputDir, nuclIdsFile, isTest=args.t)
     # Retry missed nucleotide data
     if not args.t:
         trials = 3
