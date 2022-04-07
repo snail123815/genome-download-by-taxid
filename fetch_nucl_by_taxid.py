@@ -9,6 +9,10 @@ import pickle
 from modules.calHash_on_args import calHash
 import threading
 from concurrent.futures import ThreadPoolExecutor
+import concurrent.futures
+from http.client import IncompleteRead
+from urllib.error import HTTPError
+import math
 
 
 class RecordIO:
@@ -105,42 +109,129 @@ class RecordIO:
             fh.writelines(f'{i}\n' for i in l)
 
 
-def splitGroup(listObj, step):
-    ll = [] # list of list with maximum {step} of items each
-    if len(listObj) > step:
-        nGroups = len(listObj)//step + (1 if len(listObj)%step>0 else 0)
-        logger.info(f'   {nGroups} groups.')
-        for i in range(nGroups):
-            try:
-                ll.append(listObj[i*step:i*step+step])
-            except IndexError:
-                ll.append(listObj[i*step:])
+def splitGroup(listObj, step=None, n=None, quiet=False):
+    assert (step is None and not n is None) or (not step is None and n is None)
+    if n is None:
+        ll = [] # list of list with maximum {step} of items each
+        if len(listObj) > step:
+            nGroups = len(listObj)//step + (1 if len(listObj)%step>0 else 0)
+            for i in range(nGroups):
+                try:
+                    ll.append(listObj[i*step:i*step+step])
+                except IndexError:
+                    ll.append(listObj[i*step:])
+        else:
+            ll.append(listObj)
     else:
-        ll.append(listObj)
+        step = int(len(listObj)/n + (1 if len(listObj)%n>0 else 0))
+        ll = splitGroup(listObj, step, quiet=quiet)
+    if not quiet:
+        logger.info(f'   {len(ll)} groups.')
     return ll
 
 
-def elink_by_step(RecIO, allIds, db, dbfrom, linkname, term=None, step=500):
+def elink_by_step(RecIO, allIds, db, dbfrom, linkname, term=None, step=500, minStep=10, maxconnections=10):
     groups = splitGroup(allIds, step)
     allTarIds = RecIO.readList()
     if RecIO.nGroups == -1:
         RecIO.nGroups = len(groups)
     i = RecIO.gn
+
+    def linkIds(sourceIds):
+        sema = threading.Semaphore(maxconnections)
+        
+        def _linkIds(sourceIds):
+            sema.acquire()
+            tIds = []
+            try:
+                handle = Entrez.elink(
+                    db = db,
+                    dbfrom = dbfrom,
+                    id=sourceIds,
+                    linkname=linkname, # will remove most irrelevent sequences
+                    term=term
+                )
+                record = Entrez.read(handle)
+            except (IncompleteRead, HTTPError, RuntimeError) as E:
+                lastException = E
+                try:
+                    handle.close()
+                except UnboundLocalError:
+                    pass
+                sema.release()
+                return sourceIds, False
+            handle.close()
+            [tIds.extend(
+                [l['Id'] for l in r['LinkSetDb'][0]['Link']]
+            ) for r in record if len(r['LinkSetDb']) > 0]
+            sema.release()
+            return tIds, True
+
+        threadGroups = splitGroup(sourceIds, n=maxconnections*3, quiet=True)
+        with ThreadPoolExecutor(max_workers=maxconnections) as worker:
+            futures = [worker.submit(_linkIds, g) for g in threadGroups]
+
+        targetIds = []
+        missedThreadGroups = []
+        for f in concurrent.futures.as_completed(futures):
+            ids, succeed = f.result()
+            if succeed:
+                targetIds.extend(ids)
+            else:
+                missedThreadGroups.append(ids)
+
+        trials = 3
+        nDiv = 10
+        if len(missedThreadGroups)>0:
+            logger.info(f'      Retrying {len(missedThreadGroups)} subgroups (out of {len(threadGroups)}) in this batch.')
+        while trials > 0 and len(missedThreadGroups) > 0:
+            trials-=1
+            nDiv = 10 * (3-trials)
+            divMissedGroups = []
+            [divMissedGroups.extend(splitGroup(g,n=10,quiet=True)) for g in missedThreadGroups]
+
+            with ThreadPoolExecutor(max_workers=maxconnections) as worker:
+                futures = [worker.submit(_linkIds, g) for g in divMissedGroups]
+            missedThreadGroups = []
+            for f in concurrent.futures.as_completed(futures):
+                ids, succeed = f.result()
+                if succeed:
+                    targetIds.extend(ids)
+                else:
+                    missedThreadGroups.append(ids)
+
+        if trials == 0 and len(missedThreadGroups) > 0:
+            raise lastException
+
+        return targetIds
+
     while not RecIO.completed:
-        ids = []
         logger.info(f'   Getting nucleotide ids for group {i+1}/{RecIO.nGroups}')
-        handle = Entrez.elink(
-            db = db,
-            dbfrom = dbfrom,
-            id=groups[i],
-            linkname=linkname, # will remove most irrelevent sequences
-            term=term
-        )
-        record = Entrez.read(handle)
-        handle.close()
-        [ids.extend(
-            [l['Id'] for l in r['LinkSetDb'][0]['Link']]
-        ) for r in record if len(r['LinkSetDb']) > 0]
+        try:
+            ids = linkIds(groups[i])
+            succeed = True
+        except (IncompleteRead, HTTPError):
+            logger.info(f'    HTTPError or IncompleteRead for this group. Try with smaller groups.')
+            nDiv = 10
+            succeed = False
+            while step/nDiv > minStep and not succeed:
+                ids = []
+                logger.info(f'    Trial {int(math.log(nDiv/10, 2)+1)}: {nDiv} sub groups.')
+                subGroups = splitGroup(groups[i], n=nDiv, quiet=True)
+                for n, sg in enumerate(subGroups):
+                    logger.info(f'     Sub group {n+1}.')
+                    try:
+                        ids.extend(linkIds(sg))
+                        if n + 1 == len(subGroups):
+                            succeed = True
+                    except (IncompleteRead, HTTPError) as E:
+                        logger.info(f'     Sub group {n+1} failed. Trial failed.')
+                        lastException = E
+                        break
+                nDiv *= 2
+        if not succeed:
+            logger.error(f'   Failed in fetching nucleotide ids. The last exception:')
+            logger.error(lastException)
         RecIO.appendList(ids)
         allTarIds.extend(ids)
         i += 1
@@ -206,13 +297,14 @@ def fetch_nucl_by_taxID(targetTx, minLen, targetDir, api, email, isTest=False):
                             db='nuccore',
                             dbfrom='assembly',
                             linkname='assembly_nuccore_refseq',
-                            term=f'{minLen}:99999999[SLEN]')
+                            step=100,
+                            term=f'{minLen}:999999999[SLEN]')
     logger.info(f'   Total number of nucleotides is {len(allNucl)}.')
     logger.info(f'   The first 5 are: {allNucl[:min(len(allNucl), 5)]}')
     return allNucl, nuclids_io.file
 
 
-def fetch_nucl_by_step(targetDir, idsFile, step=200, isTest=False, maxconnections=10):
+def fetch_nuclData_by_step(targetDir, idsFile, step=200, isTest=False, maxconnections=10):
     # NOTE maxconnections>10 do not work as expected. Because of the Semaphore settings.
     # TODO make maxconnections>10 work!
     logger=logging.getLogger()
@@ -229,7 +321,7 @@ def fetch_nucl_by_step(targetDir, idsFile, step=200, isTest=False, maxconnection
     toFetchGroupIdxs = list(range(len(idGroups)))
     finishedGroupIdxs = []
 
-    infoLock = threading.Lock()
+    infoLock = threading.Lock() # Lock for writing infomation pickle
     def updateInfo(n, finish=True):
         with infoLock:
             if n != -1 and finish:
@@ -254,7 +346,7 @@ def fetch_nucl_by_step(targetDir, idsFile, step=200, isTest=False, maxconnection
 
     sema = threading.Semaphore(10)
     # API key allow only 10 connections per second, will sleep 1 sec within the function to comply.
-    # This may be redundant as the Entrez module has _open.previous variable to track timming:
+    # This may be redundant as the Entrez module has _open.previous variable to track timing:
     # https://github.com/biopython/biopython/blob/e001f2eed6a9cc6260f60f87ed90fcf8ea2df4ca/Bio/Entrez/__init__.py#L561
     def fetchGbk(n):
         sema.acquire()
@@ -262,7 +354,7 @@ def fetch_nucl_by_step(targetDir, idsFile, step=200, isTest=False, maxconnection
         idFile = os.path.join(targetDir, f'nucl_{str(n+1).zfill(maxDig)}.txt')
         trials = 3
         success = False
-        logger.info(f'Fetching group No. {n+1}, {file}')
+        logger.info(f'Fetching group No. {n+1}/{len(idGroups)}, {os.path.split(file)[-1]}')
         while not success and trials > 0:
             try:
                 handle = Entrez.efetch(
@@ -294,7 +386,8 @@ def fetch_nucl_by_step(targetDir, idsFile, step=200, isTest=False, maxconnection
         if success:
             with open(idFile, 'w') as fh:
                 [fh.write(str(i) + '\n') for i in idGroups[n]]
-            logger.info(f"Finished group {n+1}: {os.stat(file).st_size/1024/1024:.2f} MB {os.path.split(file)[-1]}")
+            logger.info(f"   Finished group {n+1}/{len(idGroups)}: {os.stat(file).st_size/1024/1024:.2f} MB")
+            logger.info(f"       {file}")
             updateInfo(n) # Number finished, update after fetching
         else:
             logger.info(f"3 trials not succeed for group {n+1}")
@@ -365,14 +458,14 @@ if __name__ == '__main__':
                                                targetDir=args.outputDir,
                                                api=args.api, email=args.email,
                                                isTest=args.t)
-    missingGroups = fetch_nucl_by_step(args.outputDir, nuclIdsFile, isTest=args.t)
+    missingGroups = fetch_nuclData_by_step(args.outputDir, nuclIdsFile, isTest=args.t)
     if not args.t:
         trials = 3
         while len(missingGroups) > 0 and trials > 0:
             trials -= 1
             retryStr = f'Retrying {len(missingGroups)} missed groups. Trial No.{3-trials}'
             logger.info(f'{retryStr:=^80}')
-            missingGroups = fetch_nucl_by_step(args.outputDir, nuclIdsFile)
+            missingGroups = fetch_nuclData_by_step(args.outputDir, nuclIdsFile)
         if len(missingGroups) > 0:
             logger.warning(f'Finish with missing groups: {missingGroups}')
 
