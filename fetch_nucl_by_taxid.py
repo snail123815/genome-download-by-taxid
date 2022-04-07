@@ -354,7 +354,7 @@ def fetch_nuclData_by_step(targetDir, idsFile, step=200, isTest=False, maxconnec
         idFile = os.path.join(targetDir, f'nucl_{str(n+1).zfill(maxDig)}.txt')
         trials = 3
         success = False
-        logger.info(f'Fetching group No. {n+1}, {file}')
+        logger.info(f'Fetching group No. {n+1}/{len(idGroups)}, {os.path.split(file)[-1]}')
         while not success and trials > 0:
             try:
                 handle = Entrez.efetch(
@@ -386,7 +386,8 @@ def fetch_nuclData_by_step(targetDir, idsFile, step=200, isTest=False, maxconnec
         if success:
             with open(idFile, 'w') as fh:
                 [fh.write(str(i) + '\n') for i in idGroups[n]]
-            logger.info(f"Finished group {n+1}: {os.stat(file).st_size/1024/1024:.2f} MB {os.path.split(file)[-1]}")
+            logger.info(f"   Finished group {n+1}/{len(idGroups)}: {os.stat(file).st_size/1024/1024:.2f} MB")
+            logger.info(f"       {file}")
             updateInfo(n) # Number finished, update after fetching
         else:
             logger.info(f"3 trials not succeed for group {n+1}")
