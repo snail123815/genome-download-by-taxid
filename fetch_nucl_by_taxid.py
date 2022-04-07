@@ -386,7 +386,7 @@ def fetch_nuclData_by_step(targetDir, idsFile, step=200, isTest=False, maxconnec
         if success:
             with open(idFile, 'w') as fh:
                 [fh.write(str(i) + '\n') for i in idGroups[n]]
-            logger.info(f"   Finished group {n+1}/{len(idGroups)}: {os.stat(file).st_size/1024/1024:.2f} MB")
+            logger.info(f"    Finished group {n+1}/{len(idGroups)}: {os.stat(file).st_size/1024/1024:.2f} MB")
             logger.info(f"       {file}")
             updateInfo(n) # Number finished, update after fetching
         else:
@@ -401,9 +401,7 @@ def fetch_nuclData_by_step(targetDir, idsFile, step=200, isTest=False, maxconnec
     return toFetchGroupIdxs
 
 
-
-
-if __name__ == '__main__':
+def parseArguments():
     import argparse
 
     scriptDir = os.path.split(os.path.realpath(__file__))[0]
@@ -453,12 +451,22 @@ if __name__ == '__main__':
         parser.error(f'Please do not set output dir as {testOutputDir}')
 
     os.makedirs(args.outputDir, exist_ok=True)
+    
+    return args, logger
+
+
+def main():
+    args, logger = parseArguments()
+
+    # Fetch IDs for nucleotides
     allNucl, nuclIdsFile = fetch_nucl_by_taxID(targetTx=args.taxIds,
                                                minLen=args.minLen,
                                                targetDir=args.outputDir,
                                                api=args.api, email=args.email,
                                                isTest=args.t)
+    # Fetch nucleotide data
     missingGroups = fetch_nuclData_by_step(args.outputDir, nuclIdsFile, isTest=args.t)
+    # Retry missed nucleotide data
     if not args.t:
         trials = 3
         while len(missingGroups) > 0 and trials > 0:
@@ -470,3 +478,7 @@ if __name__ == '__main__':
             logger.warning(f'Finish with missing groups: {missingGroups}')
 
     logger.info(f'{" DONE ":=^80}')
+
+
+if __name__ == '__main__':
+    main()
