@@ -395,8 +395,9 @@ def fetch_nuclData_by_step(targetDir, idsFile, step=200, isTest=False, maxconnec
         sleep(1)
     
     with ThreadPoolExecutor(max_workers=maxconnections) as worker:
-        for n in toFetchGroupIdxs:
-            worker.submit(fetchGbk, n)
+        worker.map(fetchGbk, toFetchGroupIdxs, timeout=20*60) # times out 20 min
+#        for n in toFetchGroupIdxs:
+#            worker.submit(fetchGbk, n)
 
     return toFetchGroupIdxs
 
